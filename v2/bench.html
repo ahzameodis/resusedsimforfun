@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Engine Bench · RESUS Sim v2</title>
+<style>
+  :root {
+    --bg: #05080b; --panel: #0c1218; --panel-2: #111a22; --line: #1d2a35; --text: #d9e2ea; --muted: #7f8f9c;
+    --ecg: #22e34a; --art: #ff6b6b; --pleth: #67dcff; --cvp: #ffd60a; --pap: #ffa94d;
+    --paw: #67dcff; --flow: #22e34a; --vol: #c98bff; --co2: #e8e8e8; --warn: #f5a623; --crit: #f0483e;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--line); }
+  header h1 { margin: 0; font-size: 15px; font-weight: 650; letter-spacing: .01em; }
+  header .sub { color: var(--muted); }
+  .disclaimer { margin-left: auto; color: var(--warn); font-weight: 600; font-size: 11px; letter-spacing: .04em; }
+  main { display: grid; grid-template-columns: 290px minmax(0, 1fr) 300px; gap: 12px; padding: 12px 16px 24px; }
+  @media (max-width: 1180px) { main { grid-template-columns: 260px minmax(0, 1fr); } #numbers { grid-column: 1 / -1; } }
+  @media (max-width: 760px) { main { grid-template-columns: minmax(0, 1fr); } #screens { order: -1; } .scope { height: 280px; } .scope.vent { height: 230px; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; min-width: 0; }
+  .card h2 { margin: 2px 0 8px; font-size: 11px; font-weight: 650; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
+  #controls { display: flex; flex-direction: column; gap: 10px; }
+  label.row { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; align-items: center; margin: 6px 0; }
+  label.row span.v { font-family: var(--mono); color: var(--text); font-size: 12px; }
+  label.row input[type=range] { grid-column: 1 / -1; width: 100%; accent-color: #4aa3ff; }
+  select, button { font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; }
+  select { width: 100%; }
+  button { cursor: pointer; }
+  button:hover { border-color: #4aa3ff; }
+  .btns { display: flex; flex-wrap: wrap; gap: 6px; }
+  .note { color: var(--muted); font-size: 12px; margin: 6px 0 0; }
+  #screens { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+  .scope { position: relative; height: 330px; background: #000; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .scope.vent { height: 270px; }
+  .scope canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .loops { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .loop { position: relative; height: 180px; background: #000; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .loop canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #numbers { display: flex; flex-direction: column; gap: 10px; }
+  .tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+  .tile { background: var(--panel-2); border-radius: 8px; padding: 6px 8px; min-width: 0; }
+  .tile .k { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+  .tile .n { font-family: var(--mono); font-size: 21px; font-weight: 600; line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tile .s { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  .rhythm { font-family: var(--mono); color: var(--ecg); font-size: 13px; margin-bottom: 4px; }
+  .alarm { color: var(--crit); font-weight: 650; min-height: 18px; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>RESUS Sim v2 · Engine Bench</h1>
+  <span class="sub">Physiology engine (steps A + B) running live — physiology in, monitor numbers out.</span>
+  <span class="disclaimer">TRAINING SIMULATION — NOT A MEDICAL DEVICE · NOT FOR CLINICAL USE</span>
+</header>
+<main>
+  <section id="controls">
+    <div class="card">
+      <h2>Scenario</h2>
+      <select id="scenario"></select>
+      <p class="note" id="scNote"></p>
+    </div>
+    <div class="card">
+      <h2>Heart &amp; circulation</h2>
+      <select id="rhythm"></select>
+      <div id="hemoSliders"></div>
+    </div>
+    <div class="card">
+      <h2>Lungs &amp; breathing</h2>
+      <div id="lungSliders"></div>
+    </div>
+    <div class="card">
+      <h2>Ventilator</h2>
+      <select id="mode"></select>
+      <div id="ventSliders"></div>
+    </div>
+    <div class="card">
+      <h2>Quick actions</h2>
+      <div class="btns">
+        <button data-act="bolus">Fluid 500 mL</button>
+        <button data-act="bleed">Bleed 500 mL</button>
+        <button data-act="disconnect">Disconnect vent</button>
+        <button data-act="decompress">Decompress chest</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="screens">
+    <div class="scope" id="monWrap"><canvas id="mon"></canvas></div>
+    <div class="scope vent" id="ventWrap"><canvas id="vent"></canvas></div>
+    <div class="loops">
+      <div class="loop" id="pvWrap"><canvas id="pv"></canvas></div>
+      <div class="loop" id="fvWrap"><canvas id="fv"></canvas></div>
+    </div>
+  </section>
+
+  <section id="numbers">
+    <div class="card">
+      <div class="rhythm" id="rhythmLabel"></div>
+      <div class="alarm" id="alarm"></div>
+      <div class="tiles" id="hemoTiles"></div>
+    </div>
+    <div class="card"><h2>Ventilator</h2><div class="tiles" id="ventTiles"></div></div>
+    <div class="card"><h2>Blood gas &amp; operating point</h2><div class="tiles" id="gasTiles"></div></div>
+  </section>
+</main>
+
+<script src="engine/dist/resus-engine.js"></script>
+<script>
+(function () {
+  'use strict';
+  const R = window.ResusEngine;
+  const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const $ = (id) => document.getElementById(id);
+  const fmt = (x, d) => (x == null || !isFinite(x) ? '--' : (+x).toFixed(d || 0));
+
+  let sim = new R.Sim(R.scenario('normal').params, { seed: 1 });
+
+  // ---------- controls ----------
+  const get = (path) => R.pick(sim.p, path);
+  const setPath = (path, value) => {
+    const patch = {}; let o = patch; const ks = path.split('.');
+    ks.slice(0, -1).forEach((k) => { o = o[k] = {}; }); o[ks[ks.length - 1]] = value;
+    sim.set(patch);
+  };
+  const SLIDERS = {
+    hemoSliders: [
+      ['heart.hr', 'Baseline HR', 20, 220, 1, 'bpm'],
+      ['heart.contractility', 'LV contractility', 0.1, 1.5, 0.01, '×'],
+      ['heart.rvContractility', 'RV contractility', 0.1, 1.5, 0.01, '×'],
+      ['vessels.svr', 'SVR (vascular tone)', 200, 2500, 10, 'dyn'],
+      ['vessels.pvr', 'PVR', 50, 1000, 10, 'dyn'],
+      ['bvPct', 'Blood volume', 40, 130, 1, '% normal'],
+      ['thorax.pericardial', 'Pericardial pressure', 0, 25, 0.5, 'mmHg'],
+      ['thorax.pplOffset', 'Pleural pressure (PTX)', 0, 25, 0.5, 'mmHg'],
+      ['reflex.baro', 'Baroreflex gain', 0, 1, 0.05, ''],
+    ],
+    lungSliders: [
+      ['lungs.compliance', 'Compliance', 10, 100, 1, 'mL/cmH₂O'],
+      ['lungs.resistance', 'Airway resistance', 1, 50, 0.5, 'cmH₂O/L/s'],
+      ['lungs.shunt', 'Shunt fraction', 0, 0.7, 0.01, ''],
+      ['lungs.vqMismatch', 'V/Q mismatch', 0, 0.5, 0.01, ''],
+      ['lungs.deadSpace', 'Alveolar dead space', 0, 0.6, 0.01, ''],
+      ['breathing.rate', 'Spontaneous rate', 0, 40, 1, '/min'],
+      ['breathing.effort', 'Inspiratory effort', 0, 15, 0.5, 'cmH₂O'],
+      ['fio2', 'FiO₂', 21, 100, 1, '%'],
+    ],
+    ventSliders: [
+      ['vent.rr', 'Set rate', 4, 40, 1, '/min'],
+      ['vent.vt', 'Tidal volume', 200, 800, 10, 'mL'],
+      ['vent.flow', 'Insp. flow (VC)', 20, 90, 5, 'L/min'],
+      ['vent.pc', 'Pressure control', 5, 35, 1, 'cmH₂O'],
+      ['vent.ps', 'Pressure support', 0, 30, 1, 'cmH₂O'],
+      ['vent.itime', 'Insp. time', 0.4, 2, 0.1, 's'],
+      ['vent.peep', 'PEEP', 0, 24, 1, 'cmH₂O'],
+    ],
+  };
+  const read = (path) => {
+    if (path === 'bvPct') return 100 * (sim.p.volume.bloodVolume != null ? sim.p.volume.bloodVolume : sim.k.bvNormal) / sim.k.bvNormal;
+    if (path === 'fio2') return sim.p.vent.mode === 'off' ? sim.p.airway.fio2 : sim.p.vent.fio2;
+    return get(path);
+  };
+  const write = (path, v) => {
+    if (path === 'bvPct') return sim.set({ volume: { bloodVolume: v / 100 * sim.k.bvNormal } });
+    if (path === 'fio2') return sim.set(sim.p.vent.mode === 'off' ? { airway: { fio2: v } } : { vent: { fio2: v } });
+    setPath(path, v);
+  };
+  const inputs = [];
+  for (const [box, list] of Object.entries(SLIDERS)) {
+    for (const [path, label, min, max, step, unit] of list) {
+      const row = document.createElement('label'); row.className = 'row';
+      row.innerHTML = `<span>${label}</span><span class="v"></span><input type="range" min="${min}" max="${max}" step="${step}" aria-label="${label}${unit ? " (" + unit + ")" : ""}">`;
+      const input = row.querySelector('input'), out = row.querySelector('.v');
+      const show = () => { out.textContent = fmt(+input.value, step < 1 ? (step < 0.1 ? 2 : 1) : 0) + (unit ? ' ' + unit : ''); };
+      input.addEventListener('input', () => { write(path, +input.value); show(); });
+      inputs.push({ input, path, show });
+      $(box).appendChild(row);
+    }
+  }
+  const sync = () => {
+    for (const x of inputs) { const v = read(x.path); if (v != null) x.input.value = v; x.show(); }
+    $('rhythm').value = sim.p.heart.rhythm; $('mode').value = sim.p.vent.mode;
+  };
+
+  const groups = { hemo: 'Haemodynamic', arrest: 'Cardiac arrest', vent: 'Ventilator' };
+  for (const [g, name] of Object.entries(groups)) {
+    const og = document.createElement('optgroup'); og.label = name;
+    R.SCENARIOS.filter((s) => s.group === g).forEach((s) => { const o = new Option(s.label, s.id); og.appendChild(o); });
+    $('scenario').appendChild(og);
+  }
+  Object.entries(R.RHYTHMS).forEach(([k, r]) => $('rhythm').appendChild(new Option(r.label, k)));
+  [['off', 'Not ventilated (spontaneous)'], ['VC', 'Volume control'], ['PC', 'Pressure control'], ['PRVC', 'PRVC'], ['PS', 'Pressure support'], ['CPAP', 'CPAP']]
+    .forEach(([k, l]) => $('mode').appendChild(new Option(l, k)));
+
+  const loadScenario = (id) => {
+    const sc = R.scenario(id);
+    sim.load(sc.params);
+    $('scNote').textContent = sc.notes || '';
+    clearBuffers(); sync();
+  };
+  $('scenario').addEventListener('change', (e) => loadScenario(e.target.value));
+  $('rhythm').addEventListener('change', (e) => sim.set({ heart: { rhythm: e.target.value } }));
+  $('mode').addEventListener('change', (e) => { sim.set({ vent: { mode: e.target.value } }); sync(); });
+  document.querySelectorAll('[data-act]').forEach((b) => b.addEventListener('click', () => {
+    const bv = sim.p.volume.bloodVolume != null ? sim.p.volume.bloodVolume : sim.k.bvNormal;
+    const act = b.dataset.act;
+    if (act === 'bolus') sim.set({ volume: { bloodVolume: bv + 500 } });
+    if (act === 'bleed') sim.set({ volume: { bloodVolume: Math.max(1000, bv - 500) } });
+    if (act === 'disconnect') sim.set({ vent: { mode: 'off' } });
+    if (act === 'decompress') sim.set({ thorax: { pplOffset: 0, venousObstruction: 1 } });
+    sync();
+  }));
+
+  // ---------- waveform buffers (sweep display) ----------
+  const HZ = 200, MON_S = 8, VENT_S = 12;
+  const MON = [['ecg', 'ECG II', css('--ecg')], ['art', 'ART', css('--art')], ['pleth', 'SpO₂', css('--pleth')], ['cvp', 'CVP', css('--cvp')], ['pap', 'PAP', css('--pap')]];
+  const VEN = [['paw', 'Paw cmH₂O', css('--paw')], ['flow', 'Flow L/min', css('--flow')], ['vol', 'Volume mL', css('--vol')], ['co2', 'CO₂ mmHg', css('--co2')]];
+  const mk = (n) => ({ a: new Float32Array(n), w: 0, n });
+  let buf = {}, range = {};
+  function clearBuffers() {
+    buf = {};
+    MON.forEach(([k]) => (buf[k] = mk(MON_S * HZ)));
+    VEN.forEach(([k]) => (buf[k] = mk(VENT_S * HZ)));
+    loopCur = []; loopPrev = []; range = {};
+  }
+  let loopCur = [], loopPrev = [], lastBreath = -1;
+  clearBuffers();
+
+  function push(s) {
+    for (const k in buf) { const b = buf[k]; b.a[b.w] = s[k]; b.w = (b.w + 1) % b.n; }
+    const bs = sim.lungs.breathStart;
+    if (bs !== lastBreath) { lastBreath = bs; if (loopCur.length > 20) loopPrev = loopCur; loopCur = []; }
+    if (loopCur.length < 4000) loopCur.push([s.paw, s.vol, s.flow]);
+  }
+
+  // ---------- drawing ----------
+  function fit(canvas, wrap) {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2), w = wrap.clientWidth, h = wrap.clientHeight;
+    if (canvas._w !== w || canvas._h !== h || canvas._dpr !== dpr) { canvas.width = w * dpr; canvas.height = h * dpr; canvas._w = w; canvas._h = h; canvas._dpr = dpr; }
+    const ctx = canvas.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); return { ctx, w, h };
+  }
+  // auto-scaling ranges per channel (slowly tracking min/max) with sensible floors
+  const FIX = { ecg: [-0.6, 1.3], paw: [0, null], vol: [0, null], co2: [0, 50], flow: null };
+  function scaleFor(k, b, dt) {
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 0; i < b.n; i++) { const v = b.a[i]; if (v < lo) lo = v; if (v > hi) hi = v; }
+    if (k === 'flow') { const m = Math.max(30, Math.abs(lo), Math.abs(hi)) * 1.1; lo = -m; hi = m; }
+    else if (FIX[k]) { lo = FIX[k][0] != null ? Math.min(FIX[k][0], lo) : lo; if (FIX[k][1] != null) hi = Math.max(FIX[k][1], hi); }
+    const span = Math.max(hi - lo, k === 'art' ? 20 : k === 'cvp' || k === 'pap' ? 8 : k === 'pleth' ? 1 : 5);
+    const mid = (hi + lo) / 2;
+    lo = mid - span * 0.58; hi = mid + span * 0.58;
+    const r = range[k] || (range[k] = { lo, hi });
+    const a = Math.min(1, dt / 0.5);   // ~0.5 s easing; snaps when advanced in one jump
+    r.lo += (lo - r.lo) * a; r.hi += (hi - r.hi) * a;
+    return r;
+  }
+  function drawScope(canvas, wrap, lanes, dt) {
+    const { ctx, w, h } = fit(canvas, wrap);
+    ctx.clearRect(0, 0, w, h);
+    const band = h / lanes.length;
+    ctx.font = '11px ' + css('--mono');
+    lanes.forEach(([k, label, color], li) => {
+      const b = buf[k], top = li * band, pad = 6, H = band - pad * 2;
+      ctx.strokeStyle = 'rgba(255,255,255,0.05)'; ctx.beginPath(); ctx.moveTo(0, top + band); ctx.lineTo(w, top + band); ctx.stroke();
+      const r = scaleFor(k, b, dt);
+      if (r.lo < 0 && r.hi > 0 && (k === 'flow')) { const zy = top + pad + H * (1 - (0 - r.lo) / (r.hi - r.lo)); ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.beginPath(); ctx.moveTo(0, zy); ctx.lineTo(w, zy); ctx.stroke(); }
+      ctx.strokeStyle = color; ctx.lineWidth = 1.6; ctx.lineJoin = 'round'; ctx.beginPath();
+      const gap = Math.round(b.n * 0.025);
+      let pen = false;
+      for (let x = 0; x < w; x++) {
+        const i = Math.floor(x / w * b.n);
+        const ahead = (i - b.w + b.n) % b.n;
+        if (ahead < gap) { pen = false; continue; }
+        const y = top + pad + H * (1 - Math.min(1, Math.max(0, (b.a[i] - r.lo) / (r.hi - r.lo))));
+        if (!pen) { ctx.moveTo(x, y); pen = true; } else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      ctx.fillStyle = color; ctx.fillText(label, 8, top + 14);
+    });
+  }
+  function drawLoop(canvas, wrap, xi, yi, xl, yl, xr, yr) {
+    const { ctx, w, h } = fit(canvas, wrap);
+    ctx.clearRect(0, 0, w, h);
+    const m = 26, X = (v) => m + (v - xr[0]) / (xr[1] - xr[0]) * (w - m * 1.4), Y = (v) => h - m - (v - yr[0]) / (yr[1] - yr[0]) * (h - m * 1.6);
+    ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.beginPath(); ctx.moveTo(m, h - m); ctx.lineTo(w - 6, h - m); ctx.moveTo(m, 6); ctx.lineTo(m, h - m); ctx.stroke();
+    if (yr[0] < 0) { ctx.beginPath(); ctx.moveTo(m, Y(0)); ctx.lineTo(w - 6, Y(0)); ctx.stroke(); }
+    ctx.fillStyle = css('--muted'); ctx.font = '10.5px ' + css('--mono'); ctx.fillText(xl, w - 80, h - 8); ctx.fillText(yl, 6, 14);
+    const path = (pts, color, alpha) => { if (pts.length < 2) return; ctx.globalAlpha = alpha; ctx.strokeStyle = color; ctx.lineWidth = 1.6; ctx.beginPath(); pts.forEach((p, i) => (i ? ctx.lineTo(X(p[xi]), Y(p[yi])) : ctx.moveTo(X(p[xi]), Y(p[yi])))); ctx.stroke(); ctx.globalAlpha = 1; };
+    path(loopPrev, css('--vol'), 0.45); path(loopCur, css('--vol'), 1);
+  }
+
+  // ---------- numbers ----------
+  const tile = (k, n, s, color) => `<div class="tile"><div class="k">${k}</div><div class="n" style="color:${color || 'var(--text)'}">${n}</div><div class="s">${s || '&nbsp;'}</div></div>`;
+  function renderNumbers() {
+    const v = sim.vitals, w = v.vent;
+    $('rhythmLabel').textContent = v.rhythmLabel + (v.apnea ? ' · APNOEA' : '');
+    const al = [];
+    if (v.spo2 != null && v.spo2 < 90) al.push('SpO₂ LOW');
+    if (v.abp.sys != null && v.abp.sys < 90) al.push('HYPOTENSION');
+    if (v.pulse == null) al.push('NO PULSE');
+    if (w && sim.p.vent.mode !== 'off' && w.pip > 35) al.push('HIGH Paw');
+    if (w && w.peepi > 4) al.push('AUTO-PEEP');
+    if (v.apnea) al.push('APNOEA');
+    $('alarm').textContent = al.join(' · ');
+    $('hemoTiles').innerHTML =
+      tile('HR', fmt(v.hr), 'pulse ' + fmt(v.pulse), css('--ecg')) +
+      tile('ABP', fmt(v.abp.sys) + '/' + fmt(v.abp.dia), 'MAP ' + fmt(v.abp.map), css('--art')) +
+      tile('SpO₂', fmt(v.spo2), 'PI ' + fmt(v.pi, 1), css('--pleth')) +
+      tile('EtCO₂', fmt(v.etco2), 'RR ' + fmt(v.rr), css('--co2')) +
+      tile('CVP', fmt(v.cvp), 'PCWP ' + fmt(v.pcwp), css('--cvp')) +
+      tile('PAP', fmt(v.pap.sys) + '/' + fmt(v.pap.dia), 'mean ' + fmt(v.pap.map), css('--pap')) +
+      tile('CO', fmt(v.co, 1), 'SV ' + fmt(v.sv) + ' mL', '#c98bff') +
+      tile('SVR', fmt(v.svr), 'PPV ' + fmt(v.ppv) + ' %', 'var(--text)');
+    $('ventTiles').innerHTML = w ? (
+      tile('PIP', fmt(w.pip), 'cmH₂O', css('--paw')) + tile('Pplat', fmt(w.pplat), 'ΔP ' + fmt(w.dp), css('--paw')) +
+      tile('PEEPtot', fmt(w.peepTot, 1), 'PEEPi ' + fmt(w.peepi, 1), w.peepi > 2 ? css('--warn') : 'var(--text)') +
+      tile('VTe', fmt(w.vte), 'VTi ' + fmt(w.vti), css('--vol')) + tile('MV', fmt(w.mv, 1), 'L/min', 'var(--text)') +
+      tile('Cstat', fmt(w.cstat), 'Cdyn ' + fmt(w.cdyn), 'var(--text)')) : '';
+    $('gasTiles').innerHTML =
+      tile('PaO₂', fmt(v.pao2), 'P/F ' + fmt(v.pf), 'var(--text)') + tile('PaCO₂', fmt(v.paco2), 'gap ' + fmt(v.paco2 - v.etco2), 'var(--text)') +
+      tile('SvO₂', fmt(v.svo2), 'SaO₂ ' + fmt(v.sao2), 'var(--text)') + tile('MSFP', fmt(v.eq.msfp, 1), 'baro HR ×' + fmt(v.baro.hr, 2), 'var(--text)');
+  }
+
+  // ---------- loop ----------
+  let last = performance.now(), numClock = 0;
+  function frame(now) {
+    const dt = Math.min(0.1, (now - last) / 1000); last = now;
+    sim.step(dt, push);
+    draw(dt);
+    requestAnimationFrame(frame);
+  }
+  function draw(dt) {
+    drawScope($('mon'), $('monWrap'), MON, dt);
+    drawScope($('vent'), $('ventWrap'), VEN, dt);
+    const vs = Math.max(200, Math.ceil(Math.max(...loopCur.concat(loopPrev).map((p) => p[1]), 1) / 100) * 100 * 1.1);
+    const ps = Math.max(30, Math.ceil(Math.max(...loopCur.concat(loopPrev).map((p) => p[0]), 1) / 10) * 10 + 5);
+    const fs = Math.max(30, Math.max(...loopCur.concat(loopPrev).map((p) => Math.abs(p[2])), 1) * 1.15);
+    drawLoop($('pv'), $('pvWrap'), 0, 1, 'Paw', 'Volume', [0, ps], [0, vs]);
+    drawLoop($('fv'), $('fvWrap'), 1, 2, 'Volume', 'Flow', [0, vs], [-fs, fs]);
+    numClock += dt; if (numClock > 0.25) { numClock = 0; renderNumbers(); }
+  }
+  loadScenario('normal');
+  requestAnimationFrame(frame);
+  // debugging hooks (console / automated checks): advance without animation frames
+  window.__sim = () => sim;
+  window.__bench = {
+    tick(seconds) { sim.step(seconds, push); numClock = 1; draw(seconds); return sim.t; },
+    load(id) { $('scenario').value = id; loadScenario(id); },
+  };
+})();
+</script>
+</body>
+</html>
